@@ -91,6 +91,93 @@ func Test_parseArguments(t *testing.T) {
 	}
 }
 
+func TestValidateUserConfiguration(t *testing.T) {
+	builtin := registry.Mount{
+		Name: "builtin",
+		Kind: registry.KindCarrier,
+		Devices: []registry.Device{
+			{
+				Name:       "display",
+				DeviceType: registry.DeviceTypeDisplay,
+				Options: []registry.DeviceOption{
+					{Name: "none"},
+					{Name: "5-dsi-touch-a"},
+				},
+			},
+		},
+	}
+	withBase := registry.Mount{
+		Name:         "media-carrier",
+		Kind:         registry.KindCarrier,
+		EnabledDtbos: []string{"base.dtbo"},
+		Devices:      builtin.Devices,
+	}
+
+	tests := []struct {
+		name      string
+		mount     registry.Mount
+		selection []status.StatusDevice
+		wantErr   bool
+	}{
+		{
+			name:      "mount without base overlays requires a device option",
+			mount:     builtin,
+			selection: nil,
+			wantErr:   true,
+		},
+		{
+			name:      "mount without base overlays accepts a device option",
+			mount:     builtin,
+			selection: []status.StatusDevice{{Device: "display", Option: "5-dsi-touch-a"}},
+			wantErr:   false,
+		},
+		{
+			name:      "mount with base overlays allows an empty selection",
+			mount:     withBase,
+			selection: nil,
+			wantErr:   false,
+		},
+		{
+			name:      "unknown device is rejected",
+			mount:     builtin,
+			selection: []status.StatusDevice{{Device: "camera0", Option: "none"}},
+			wantErr:   true,
+		},
+		{
+			name:      "unsupported option is rejected",
+			mount:     builtin,
+			selection: []status.StatusDevice{{Device: "display", Option: "10-dsi-touch-a"}},
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateUserConfiguration(tt.mount, tt.selection)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateUserConfiguration() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExampleDeviceOption(t *testing.T) {
+	mount := registry.Mount{
+		Devices: []registry.Device{
+			{
+				Name: "display",
+				Options: []registry.DeviceOption{
+					{Name: "none"},
+					{Name: "5-dsi-touch-a"},
+				},
+			},
+		},
+	}
+	if got := exampleDeviceOption(mount); got != "display=5-dsi-touch-a" {
+		t.Errorf("exampleDeviceOption() = %q, want %q", got, "display=5-dsi-touch-a")
+	}
+}
+
 func TestCollectDtboFiles(t *testing.T) {
 	t.Cleanup(testutil.SetupUnoQDebian())
 

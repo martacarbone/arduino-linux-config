@@ -6,6 +6,8 @@
 package registry
 
 import (
+	"github.com/arduino/go-paths-helper"
+
 	"github.com/arduino/arduino-linux-config/internal/config"
 )
 
@@ -64,6 +66,7 @@ const (
 	MediaCarrier   MountName = "media-carrier"
 	AudioCodecZero MountName = "audio-codec-zero"
 	Automation     MountName = "automation"
+	Builtin        MountName = "builtin"
 )
 
 // Mount is a part that plugs into the board and adds device tree overlays.
@@ -110,9 +113,12 @@ func New() Registry {
 			Mounts: []Mount{unoqMediaCarrier},
 		}
 	case board == "ventunoq" && boardOs == "ubuntu":
-		return Registry{
-			Mounts: ventunoqUbuntuHats,
-		}
+		createFakeFiles()
+		mounts := make([]Mount, 0, len(ventunoqUbuntuHats)+2)
+		mounts = append(mounts, ventunoqUbuntuHats...)
+		mounts = append(mounts, unoqMediaCarrier)
+		mounts = append(mounts, ventunoBuiltin)
+		return Registry{Mounts: mounts}
 	default:
 		return Registry{}
 	}
@@ -225,7 +231,7 @@ var unoqMediaCarrier = Mount{
 }
 
 var ventunoqUbuntuHats = []Mount{
-	{ // TODO update
+	{
 		Name: AudioCodecZero,
 		Kind: KindHat,
 		EnabledDtbos: []string{
@@ -239,4 +245,74 @@ var ventunoqUbuntuHats = []Mount{
 			"monaco-monza-automation-hat.dtbo",
 		},
 	},
+}
+
+var ventunoBuiltin = Mount{
+	Name: Builtin,
+	Kind: KindCarrier,
+	Devices: []Device{
+		{
+			Name:       "display",
+			DeviceType: DeviceTypeDisplay,
+			Options: []DeviceOption{
+				{
+					Name:      "none",
+					DtboFiles: []string{"monaco-ubuntu-hat.dtbo"},
+				},
+				{
+					Name: "5-dsi-touch-a",
+					DtboFiles: []string{
+						"monaco-ubutu-automation-hat.dtbo",
+					},
+				},
+			},
+		},
+	},
+}
+
+const (
+	fakeOverlaysDir   = "/var/lib/arduino-linux-config/overlays"
+	fakeOverlaySource = "monaco-monza-automation-hat.dtbo"
+)
+
+// createFakeFiles populates the overlays directory with placeholder DTBO files
+// by copying an existing overlay onto every DTBO referenced by the media carrier
+// (the qrb* overlays) and the builtin mount (the monaco-ub* files). Files that
+// already exist are left untouched, so the call is idempotent and never fails
+// when the placeholders are already in place.
+func createFakeFiles() {
+	overlaysDir := paths.New(fakeOverlaysDir)
+	source := overlaysDir.Join(fakeOverlaySource)
+
+	seen := map[string]struct{}{}
+	for _, m := range []Mount{unoqMediaCarrier, ventunoBuiltin} {
+		for _, dtbo := range mountDtboFiles(m) {
+			if _, ok := seen[dtbo]; ok {
+				continue
+			}
+			seen[dtbo] = struct{}{}
+
+			dst := overlaysDir.Join(dtbo)
+			if dst.Exist() {
+				continue
+			}
+			// Best effort: a failed copy surfaces later as an apply error.
+			_ = source.CopyTo(dst)
+		}
+	}
+}
+
+// mountDtboFiles returns every DTBO file referenced by a mount, across its
+// enabled/disabled lists and all of its device options.
+func mountDtboFiles(m Mount) []string {
+	files := make([]string, 0)
+	files = append(files, m.EnabledDtbos...)
+	files = append(files, m.DisabledDtbos...)
+	for _, d := range m.Devices {
+		for _, o := range d.Options {
+			files = append(files, o.DtboFiles...)
+			files = append(files, o.IncompatibleDtbo...)
+		}
+	}
+	return files
 }

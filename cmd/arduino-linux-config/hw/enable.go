@@ -138,6 +138,16 @@ func parseUserArgs(args []string) ([]status.StatusDevice, error) {
 }
 
 func validateUserConfiguration(mount registry.Mount, selection []status.StatusDevice) error {
+	// A mount without base overlays applies nothing on its own, so enabling it
+	// only affects the device tree when the user selects a device option.
+	// Refuse a selection-less enable to avoid a no-op command.
+	if len(mount.EnabledDtbos) == 0 && len(mount.Devices) > 0 && len(selection) == 0 {
+		if example := exampleDeviceOption(mount); example != "" {
+			return fmt.Errorf("%s requires a device option, e.g. %q", mount.Name, example)
+		}
+		return fmt.Errorf("%s requires a device option", mount.Name)
+	}
+
 	for _, s := range selection {
 		device, exist := mount.FindDeviceByName(registry.DeviceName(s.Device))
 		if !exist {
@@ -148,4 +158,22 @@ func validateUserConfiguration(mount registry.Mount, selection []status.StatusDe
 		}
 	}
 	return nil
+}
+
+// exampleDeviceOption returns a sample "device=option" hint, preferring a real
+// option over "none" so the message points at a meaningful selection.
+func exampleDeviceOption(mount registry.Mount) string {
+	var fallback string
+	for _, device := range mount.Devices {
+		for _, option := range device.Options {
+			if option.Name == string(registry.None) {
+				continue
+			}
+			return fmt.Sprintf("%s=%s", device.Name, option.Name)
+		}
+		if fallback == "" && len(device.Options) > 0 {
+			fallback = fmt.Sprintf("%s=%s", device.Name, device.Options[0].Name)
+		}
+	}
+	return fallback
 }
